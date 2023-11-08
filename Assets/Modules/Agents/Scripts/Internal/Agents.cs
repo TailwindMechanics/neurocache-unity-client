@@ -1,12 +1,13 @@
 using Unity.Plastic.Newtonsoft.Json;
+using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using Sirenix.OdinInspector;
 using System.Net.Http;
+using System.Text;
 using UnityEngine;
 using System.IO;
 using Zenject;
 using System;
-using UniRx;
 
 using Modules.Agents.External;
 
@@ -30,62 +31,47 @@ namespace Modules.Agents.Internal
             var jsonPayload = JsonConvert.SerializeObject(agent);
             Debug.Log($"<color=yellow><b>>>> Sending request: {jsonPayload}</b></color>");
 
-            var httpClient = new HttpClient();
-            var queryParams = $"?payload={Uri.EscapeDataString(agent.Payload)}&agent_id={Uri.EscapeDataString(agent.AgentId)}";
-            var sseEndpoint = endpoint + queryParams;
-
-            httpClient.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
-            httpClient.GetStreamAsync(sseEndpoint).ToObservable()
-                .SelectMany(stream => ReadStream(stream).ToObservable())
-                .SelectMany(stream => stream.Select(line => line))
-                .TakeUntilDestroy(this)
-                .Finally(() => Debug.Log("<color=orange><b>>>> Connection closed</b></color>"))
-                .Subscribe(
-                    line => Debug.Log($"<color=green><b>>>> {line}</b></color>"),
-                    ex => Debug.LogError($"Error: {ex.Message}")
-                );
+            Task.Run(() => SendAndProcessSseAsync(jsonPayload));
         }
 
-        Task<IObservable<string>> ReadStream(Stream stream)
+        async Task SendAndProcessSseAsync(string jsonPayload)
         {
-            return Task.FromResult(Observable.Create<string>(observer =>
+            using var httpClient = new HttpClient();
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+            httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+
+            var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+            request.Content = content;
+            // request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "your_api_token");
+
+            try
             {
-                var reader = new StreamReader(stream);
-                var cancellationToken = new System.Threading.CancellationToken();
-
-                Action readLines = ReadLines;
-                readLines.Invoke();
-
-                return Disposable.Create(() =>
+                using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+                if (response.IsSuccessStatusCode)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    cancellationToken = new System.Threading.CancellationToken(true);
-                });
-
-                async void ReadLines()
-                {
-                    try
+                    await using (var stream = await response.Content.ReadAsStreamAsync())
+                    using (var reader = new StreamReader(stream))
                     {
-                        while (!cancellationToken.IsCancellationRequested)
+                        while (!reader.EndOfStream)
                         {
                             var line = await reader.ReadLineAsync();
                             if (!string.IsNullOrWhiteSpace(line) && line.StartsWith("data:"))
                             {
-                                observer.OnNext(line.Replace("data:", "").Trim());
+                                var data = line.Replace("data:", "").Trim();
+                                Debug.Log($"<color=green><b>>>> {data}</b></color>");
                             }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        observer.OnError(ex);
-                    }
-                    finally
-                    {
-                        reader.Dispose();
-                        observer.OnCompleted();
-                    }
+
+                    Debug.Log("<color=orange><b>>>> Connection closed</b></color>");
                 }
-            }));
+
+                else Debug.LogError($"Error: {response.StatusCode}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Error: {ex.Message}");
+            }
         }
     }
 }
