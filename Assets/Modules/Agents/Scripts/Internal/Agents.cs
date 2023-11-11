@@ -30,7 +30,7 @@ namespace Modules.Agents.Internal
             OnSendRequest(agentIdSo.Vo, promptText, apiKeySo.Vo);
         }
 
-        [HideInInspector, SerializeField]
+        [PropertyOrder(2), SerializeField]
         bool executing;
         [UsedImplicitly]
         string ButtonText => executing ? "Running..." : "Send Request";
@@ -50,7 +50,7 @@ namespace Modules.Agents.Internal
             using var httpClient = new HttpClient();
             httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
             var jsonPayload = JsonConvert.SerializeObject(runAgentRequest);
-            Debug.Log($"<color=white><b>Subscribing...</b></color>");
+            Debug.Log("<color=white><b>Subscribing...</b></color>");
 
             var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
             var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
@@ -66,7 +66,7 @@ namespace Modules.Agents.Internal
                     await using (var stream = await response.Content.ReadAsStreamAsync())
                     using (var reader = new StreamReader(stream))
                     {
-                        while (!reader.EndOfStream)
+                        while (!reader.EndOfStream && executing)
                         {
                             var line = await reader.ReadLineAsync();
                             if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data:")) continue;
@@ -83,8 +83,8 @@ namespace Modules.Agents.Internal
                                 break;
                             }
 
-                            var node = JsonConvert.DeserializeObject<NodeData>(data);
-                            Debug.Log($"<color=yellow><b>       {emissionCount}. Executing node: {node.NodeName}</b></color>");
+                            var node = JsonConvert.DeserializeObject<Node>(data);
+                            Debug.Log($"<color=yellow><b>       {emissionCount}. Executing node: {node.Data.NodeName}, {JsonConvert.SerializeObject(node)}</b></color>");
                             emissionCount++;
                         }
                     }
