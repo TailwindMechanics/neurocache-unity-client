@@ -517,9 +517,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   endpoint: http://localhost:3000/agent/run
-  agentVo:
-    agentId: some_agent
-    payload: "\u266B Hello world, this is me \u266B"
+  apiKeySo: {fileID: 11400000, guid: 44873eac0b2cf0f4d9d2f02d3d27f412, type: 2}
+  agentIdSo: {fileID: 11400000, guid: 535ac9dcf617ac0449bde3c3eafc55e4, type: 2}
+  promptText: Prompt is not currently used
+  executing: 0
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
