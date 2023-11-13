@@ -82,9 +82,15 @@ namespace Modules.Agents.Internal
                                 Debug.Log($"<color=orange><b>   {data}</b></color>");
                                 break;
                             }
+                            if (!data.Contains("{"))
+                            {
+                                Debug.Log($"<color=yellow><b>       {data}</b></color>");
+                                continue;
+                            }
 
                             var node = JsonConvert.DeserializeObject<Node>(data);
                             Debug.Log($"<color=yellow><b>       {emissionCount}. Executing node: {node.Data.NodeName}, {JsonConvert.SerializeObject(node)}</b></color>");
+
                             emissionCount++;
                         }
                     }
