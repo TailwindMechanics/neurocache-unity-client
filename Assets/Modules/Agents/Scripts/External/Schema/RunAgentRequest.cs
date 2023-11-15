@@ -10,7 +10,7 @@ namespace Modules.Agents.External.Schema
 			Prompt = prompt;
 		}
 
-		[JsonProperty("agent_id")]
+		[JsonProperty("agentid")]
 		public string AgentId {get;}
 		[JsonProperty("prompt")]
 		public string Prompt {get;}
