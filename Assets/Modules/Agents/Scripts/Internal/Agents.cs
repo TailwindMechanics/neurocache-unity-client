@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using JetBrains.Annotations;
 using Sirenix.OdinInspector;
+using System.Threading;
 using System.Net.Http;
 using System.Text;
 using UnityEngine;
@@ -10,9 +11,9 @@ using System.IO;
 using Zenject;
 using System;
 
+using Modules.Agents.External.Schema;
 using Modules.Credentials.External;
 using Modules.Agents.External;
-using Modules.Agents.External.Schema;
 
 
 namespace Modules.Agents.Internal
@@ -23,29 +24,33 @@ namespace Modules.Agents.Internal
         [InlineEditor, SerializeField] KeySo apiKeySo;
         [InlineEditor, SerializeField] KeySo agentIdSo;
         [TextArea(3,3), SerializeField] string promptText;
-        [DisableIf("$executing"), Button("$ButtonText", ButtonSizes.Large)]
-        void SendRequest()
-        {
-            executing = true;
-            OnSendRequest(agentIdSo.Vo, promptText, apiKeySo.Vo);
-        }
 
-        [PropertyOrder(2), SerializeField]
-        bool executing;
+
         [UsedImplicitly]
         string ButtonText => executing ? "Running..." : "Send Request";
+        [PropertyOrder(3), SerializeField]
+        bool executing;
+        CancellationTokenSource cancellationTokenSource;
+
+        [HideIf("$executing"), Button("$ButtonText", ButtonSizes.Large)]
+        void Send()
+            => OnSendRequest(agentIdSo.Vo, promptText, apiKeySo.Vo);
+
+        [ShowIf("executing"), PropertyOrder(2), Button("Cancel Request", ButtonSizes.Large)]
+        void Cancel()
+            => cancellationTokenSource?.Cancel();
 
         public override void InstallBindings()
             => Container.Bind<IAgents>().FromInstance(this).AsSingle();
 
         void OnSendRequest(KeyVo agentId, string prompt, KeyVo apiKey)
-            => Task.Run(()
-                => SendAndProcessSseAsync(
-                    new RunAgentRequest(agentId.Key, prompt),
-                    apiKey
-                ));
+        {
+            executing = true;
+            cancellationTokenSource = new CancellationTokenSource();
+            Task.Run(() => SendAndProcessSseAsync(new RunAgentRequest(agentId.Key, prompt), apiKey, cancellationTokenSource.Token));
+        }
 
-        async Task SendAndProcessSseAsync(RunAgentRequest runAgentRequest, KeyVo apiKey)
+        async Task SendAndProcessSseAsync(RunAgentRequest runAgentRequest, KeyVo apiKey, CancellationToken cancelToken)
         {
             using var httpClient = new HttpClient();
             httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
@@ -60,8 +65,13 @@ namespace Modules.Agents.Internal
 
             try
             {
-                using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-                if (response.IsSuccessStatusCode)
+                using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancelToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Debug.LogError($"Error: {response.StatusCode}, {response.ReasonPhrase}");
+                    Debug.LogError($"Error: {JsonConvert.SerializeObject(response)}");
+                }
+                else
                 {
                     await using (var stream = await response.Content.ReadAsStreamAsync())
                     using (var reader = new StreamReader(stream))
@@ -77,11 +87,13 @@ namespace Modules.Agents.Internal
                                 Debug.Log($"<color=green><b>    {data}</b></color>");
                                 continue;
                             }
+
                             if (data.Contains("</end"))
                             {
                                 Debug.Log($"<color=orange><b>   {data}</b></color>");
                                 break;
                             }
+
                             if (!data.Contains("{"))
                             {
                                 Debug.Log($"<color=yellow><b>       {data}</b></color>");
@@ -89,7 +101,8 @@ namespace Modules.Agents.Internal
                             }
 
                             var node = JsonConvert.DeserializeObject<Node>(data);
-                            Debug.Log($"<color=yellow><b>       {emissionCount}. Executing node: {node.Data.NodeName}, {JsonConvert.SerializeObject(node)}</b></color>");
+                            Debug.Log(
+                                $"<color=yellow><b>       {emissionCount}. Executing node: {node.Data.NodeName}, {JsonConvert.SerializeObject(node)}</b></color>");
 
                             emissionCount++;
                         }
@@ -97,11 +110,10 @@ namespace Modules.Agents.Internal
 
                     Debug.Log("<color=white><b>Subscription closed.</b></color>");
                 }
-                else
-                {
-                    Debug.LogError($"Error: {response.StatusCode}, {response.ReasonPhrase}");
-                    Debug.LogError($"Error: {JsonConvert.SerializeObject(response)}");
-                }
+            }
+            catch (OperationCanceledException)
+            {
+                Debug.Log("<color=red><b>Operation cancelled by user.</b></color>");
             }
             catch (Exception ex)
             {
@@ -110,6 +122,7 @@ namespace Modules.Agents.Internal
             finally
             {
                 executing = false;
+                cancellationTokenSource = null;
             }
         }
     }
