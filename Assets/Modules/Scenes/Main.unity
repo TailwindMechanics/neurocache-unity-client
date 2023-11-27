@@ -517,11 +517,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c7394ead74f604544a74dca9c388b8ae, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  endpoint: https://neurocache.dev/agent/run
+  endpoint: wss://neurocache.dev
   apiKeySo: {fileID: 11400000, guid: 44873eac0b2cf0f4d9d2f02d3d27f412, type: 2}
   agentIdSo: {fileID: 11400000, guid: 535ac9dcf617ac0449bde3c3eafc55e4, type: 2}
   promptText: Greetings Brainwave, how goes it?
-  executing: 0
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

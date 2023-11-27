@@ -1,128 +1,115 @@
-using Unity.Plastic.Newtonsoft.Json;
-using System.Net.Http.Headers;
 using System.Threading.Tasks;
-using JetBrains.Annotations;
 using Sirenix.OdinInspector;
+using System.Net.WebSockets;
 using System.Threading;
-using System.Net.Http;
 using System.Text;
 using UnityEngine;
-using System.IO;
 using Zenject;
 using System;
 
-using Modules.Agents.External.Schema;
 using Modules.Credentials.External;
 using Modules.Agents.External;
-
 
 namespace Modules.Agents.Internal
 {
     public class Agents : MonoInstaller, IAgents
     {
-        [TextArea(2,2), SerializeField] string endpoint;
+        [TextArea(2, 2), SerializeField] string endpoint;
         [InlineEditor, SerializeField] KeySo apiKeySo;
         [InlineEditor, SerializeField] KeySo agentIdSo;
-        [TextArea(3,3), SerializeField] string promptText;
+        [TextArea(3, 3), SerializeField] string promptText;
 
+        [ButtonGroup("OpenClose"), Button(ButtonSizes.Large)]
+        void Disconnect() => CloseWebSocketConnection();
+        [ButtonGroup("OpenClose"), Button(ButtonSizes.Large)]
+        void Connect() => StartWebSocketConnection();
+        [Button(ButtonSizes.Large)]
+        void Send() => SendWebSocketMessage(promptText);
 
-        [UsedImplicitly]
-        string ButtonText => executing ? "Running..." : "Send Request";
-        [PropertyOrder(3), SerializeField]
-        bool executing;
         CancellationTokenSource cancellationTokenSource;
-
-        [HideIf("$executing"), Button("$ButtonText", ButtonSizes.Large)]
-        void Send()
-            => OnSendRequest(agentIdSo.Vo, promptText, apiKeySo.Vo);
-
-        [ShowIf("executing"), PropertyOrder(2), Button("Cancel Request", ButtonSizes.Large)]
-        void Cancel()
-            => cancellationTokenSource?.Cancel();
+        ClientWebSocket webSocket;
 
         public override void InstallBindings()
             => Container.Bind<IAgents>().FromInstance(this).AsSingle();
 
-        void OnSendRequest(KeyVo agentId, string prompt, KeyVo apiKey)
+        async void StartWebSocketConnection()
         {
-            executing = true;
             cancellationTokenSource = new CancellationTokenSource();
-            Task.Run(() => SendAndProcessSseAsync(new RunAgentRequest(agentId.Key, prompt), apiKey, cancellationTokenSource.Token));
-        }
-
-        async Task SendAndProcessSseAsync(RunAgentRequest runAgentRequest, KeyVo apiKey, CancellationToken cancelToken)
-        {
-            using var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
-            var jsonPayload = JsonConvert.SerializeObject(runAgentRequest);
-            Debug.Log("<color=white><b>Subscribing...</b></color>");
-
-            var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
-            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-            request.Headers.Add("apikey", apiKey.Key);
-            request.Content = content;
-            var emissionCount = 0;
+            webSocket = new ClientWebSocket();
 
             try
             {
-                using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancelToken);
-                if (!response.IsSuccessStatusCode)
-                {
-                    Debug.LogError($"Error: {response.StatusCode}, {response.ReasonPhrase}");
-                    Debug.LogError($"Error: {JsonConvert.SerializeObject(response)}");
-                }
-                else
-                {
-                    await using (var stream = await response.Content.ReadAsStreamAsync())
-                    using (var reader = new StreamReader(stream))
-                    {
-                        while (!reader.EndOfStream && executing)
-                        {
-                            var line = await reader.ReadLineAsync();
-                            if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data:")) continue;
+                var wsUri = new Uri($"{endpoint}/agent/run?agentId={agentIdSo.Vo.Key}&apiKey={apiKeySo.Vo.Key}");
+                Debug.Log($"<color=white><b>Connecting to uri:{wsUri}</b></color>");
+                await webSocket.ConnectAsync(wsUri, cancellationTokenSource.Token);
+                Debug.Log("<color=cyan><b>Connected via WebSocket</b></color>");
 
-                            var data = line.Replace("data:", "").Trim();
-                            if (data.Contains("<start"))
-                            {
-                                Debug.Log($"<color=green><b>    {data}</b></color>");
-                                continue;
-                            }
-
-                            if (data.Contains("</end"))
-                            {
-                                Debug.Log($"<color=orange><b>   {data}</b></color>");
-                                break;
-                            }
-
-                            if (!data.Contains("{"))
-                            {
-                                Debug.Log($"<color=yellow><b>       {data}</b></color>");
-                                continue;
-                            }
-
-                            var node = JsonConvert.DeserializeObject<Node>(data);
-                            Debug.Log(
-                                $"<color=yellow><b>       {emissionCount}. Executing node: {node.Data.NodeName}, {JsonConvert.SerializeObject(node)}</b></color>");
-
-                            emissionCount++;
-                        }
-                    }
-
-                    Debug.Log("<color=white><b>Subscription closed.</b></color>");
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                Debug.Log("<color=red><b>Operation cancelled by user.</b></color>");
+                await ReceiveMessages(cancellationTokenSource.Token);
             }
             catch (Exception ex)
             {
-                Debug.LogError($"Error: {JsonConvert.SerializeObject(ex)}");
+                Debug.LogError($"Error with WebSocket connection: {ex}");
+                webSocket?.Dispose();
+                webSocket = null;
+            }
+        }
+
+        async void CloseWebSocketConnection()
+        {
+            if (webSocket is not { State: WebSocketState.Open })
+            {
+                Debug.Log("<color=red><b>WebSocket connection is not open or already closed.</b></color>");
+                return;
+            }
+
+            try
+            {
+                await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
+                cancellationTokenSource?.Cancel();
+            }
+            catch (WebSocketException ex)
+            {
+                Debug.LogError($"WebSocketException during close: {ex.Message}");
             }
             finally
             {
-                executing = false;
+                webSocket.Dispose();
+                webSocket = null;
+                cancellationTokenSource?.Dispose();
                 cancellationTokenSource = null;
+                Debug.Log("<color=orange><b>WebSocket connection closed.</b></color>");
+            }
+        }
+
+        async Task ReceiveMessages(CancellationToken cancelToken)
+        {
+            var buffer = new byte[1024 * 4];
+            while (webSocket is { State: WebSocketState.Open } && !cancelToken.IsCancellationRequested)
+            {
+                var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancelToken);
+                if (result.MessageType == WebSocketMessageType.Text)
+                {
+                    var receivedMessage = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                    Debug.Log($"<color=yellow><b>Received message: {receivedMessage}</b></color>");
+                }
+                else if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    break;
+                }
+            }
+        }
+
+        async void SendWebSocketMessage(string message)
+        {
+            if (webSocket is { State: WebSocketState.Open })
+            {
+                var messageBuffer = Encoding.UTF8.GetBytes(message);
+                await webSocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
+                Debug.Log($"<color=green><b>Message sent: {message}</b></color>");
+            }
+            else
+            {
+                Debug.LogError("<color=red><b>WebSocket connection is not open.</b></color>");
             }
         }
     }
