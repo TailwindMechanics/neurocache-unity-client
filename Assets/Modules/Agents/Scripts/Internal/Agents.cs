@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using JetBrains.Annotations;
 using Sirenix.OdinInspector;
 using System.Net.WebSockets;
 using System.Threading;
@@ -7,30 +8,64 @@ using UnityEngine;
 using Zenject;
 using System;
 
-using Modules.Credentials.External;
+using Modules.Agents.External.Schema;
 using Modules.Agents.External;
 
 namespace Modules.Agents.Internal
 {
     public class Agents : MonoInstaller, IAgents
     {
-        [TextArea(2, 2), SerializeField] string endpoint;
-        [InlineEditor, SerializeField] KeySo apiKeySo;
-        [InlineEditor, SerializeField] KeySo agentIdSo;
-        [TextArea(3, 3), SerializeField] string promptText;
+        [TextArea(2, 2), ReadOnly, SerializeField]
+        string operationToken;
 
-        [ButtonGroup("OpenClose"), Button(ButtonSizes.Large)]
+        [InlineEditor, SerializeField]
+        ConnectionSettingsSo settings;
+
+        [FoldoutGroup("Report"), HideLabel, SerializeField]
+        OperationReportVo reportVo;
+
+        [UsedImplicitly]
+        bool Connected => webSocket is { State: WebSocketState.Open };
+        [UsedImplicitly]
+        bool AllowSend => !string.IsNullOrWhiteSpace(operationToken);
+
+        [EnableIf("$Connected"), ButtonGroup("OpenClose"), Button(ButtonSizes.Large)]
         void Disconnect() => CloseWebSocketConnection();
-        [ButtonGroup("OpenClose"), Button(ButtonSizes.Large)]
+        [DisableIf("$Connected"), ButtonGroup("OpenClose"), Button(ButtonSizes.Large)]
         void Connect() => StartWebSocketConnection();
-        [Button(ButtonSizes.Large)]
-        void Send() => SendWebSocketMessage(promptText);
+        [EnableIf("$AllowSend"), Button(ButtonSizes.Large)]
+        void Send()
+        {
+            var report = new OperationReport(
+                Guid.Parse(operationToken),
+                reportVo.Author,
+                reportVo.Payload,
+                true,
+                reportVo.ReportId
+            );
+            SendWebSocketMessage(OperationReport.ToJson(report));
+        }
 
         CancellationTokenSource cancellationTokenSource;
         ClientWebSocket webSocket;
 
         public override void InstallBindings()
             => Container.Bind<IAgents>().FromInstance(this).AsSingle();
+
+        void OnReportReceived(OperationReport report)
+        {
+            Debug.Log($"<color=yellow><b>Received report: {report}</b></color>");
+            OnReceivedVanguardStartedReport(report);
+        }
+
+        void OnReceivedVanguardStartedReport(OperationReport report)
+        {
+            if (report.Payload == "vanguard_started")
+            {
+                Debug.Log($"<color=yellow><b>Received vanguard started report: {report}</b></color>");
+                operationToken = report.Token.ToString();
+            }
+        }
 
         async void StartWebSocketConnection()
         {
@@ -39,7 +74,7 @@ namespace Modules.Agents.Internal
 
             try
             {
-                var wsUri = new Uri($"{endpoint}/agent/run?agentId={agentIdSo.Vo.Key}&apiKey={apiKeySo.Vo.Key}");
+                var wsUri = new Uri($"{settings.Endpoint}/agent/run?agentId={settings.AgentId}&apiKey={settings.ApiKey}");
                 Debug.Log($"<color=white><b>Connecting to uri:{wsUri}</b></color>");
                 await webSocket.ConnectAsync(wsUri, cancellationTokenSource.Token);
                 Debug.Log("<color=cyan><b>Connected via WebSocket</b></color>");
@@ -91,6 +126,9 @@ namespace Modules.Agents.Internal
                 {
                     var receivedMessage = Encoding.UTF8.GetString(buffer, 0, result.Count);
                     Debug.Log($"<color=yellow><b>Received message: {receivedMessage}</b></color>");
+
+                    var report = OperationReport.FromJson(receivedMessage);
+                    OnReportReceived(report);
                 }
                 else if (result.MessageType == WebSocketMessageType.Close)
                 {

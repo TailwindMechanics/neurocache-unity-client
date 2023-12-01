@@ -1,7 +1,7 @@
 {
     "name": "Agents.External",
     "rootNamespace": "Modules",
-    "references": [],
+    "references": ["GUID:3d74970a4bad12548b456a6f9796c763"],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
