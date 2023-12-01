@@ -60,7 +60,7 @@ namespace Modules.Agents.Internal
 
         void OnReceivedVanguardStartedReport(OperationReport report)
         {
-            if (report.Payload == "vanguard_started")
+            if (report.ReportId == "vanguard_started")
             {
                 Debug.Log($"<color=yellow><b>Received vanguard started report: {report}</b></color>");
                 operationToken = report.Token.ToString();
