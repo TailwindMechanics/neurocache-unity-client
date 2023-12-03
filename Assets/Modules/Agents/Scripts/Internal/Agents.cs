@@ -44,6 +44,7 @@ namespace Modules.Agents.Internal
             var report = new OperationReport(
                 Guid.Parse(operationToken),
                 reportVo.Author,
+                reportVo.Recipient,
                 reportVo.Payload,
                 Guid.Parse(settings.AgentId),
                 true,
