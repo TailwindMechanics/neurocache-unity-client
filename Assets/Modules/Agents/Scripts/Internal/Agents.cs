@@ -32,7 +32,12 @@ namespace Modules.Agents.Internal
         [EnableIf("$Connected"), ButtonGroup("OpenClose"), Button(ButtonSizes.Large)]
         void Disconnect() => CloseWebSocketConnection();
         [DisableIf("$Connected"), ButtonGroup("OpenClose"), Button(ButtonSizes.Large)]
-        void Connect() => StartWebSocketConnection();
+        void Connect()
+        {
+            operationToken = "";
+            StartWebSocketConnection();
+        }
+
         [EnableIf("$AllowSend"), Button(ButtonSizes.Large)]
         void Send()
         {
@@ -55,8 +60,22 @@ namespace Modules.Agents.Internal
 
         void OnReportReceived(OperationReport report)
         {
+            if (OnReceivedDispatchStopReport(report)) return;
+
             Debug.Log($"<color=yellow><b>Received report: {report}</b></color>");
             OnReceivedVanguardStartedReport(report);
+        }
+
+        bool OnReceivedDispatchStopReport(OperationReport report)
+        {
+            if (report.Author == "Vanguard" && report.ReportId == "vanguard_stop")
+            {
+                Debug.Log($"Dispatching stop signal for operation: {operationToken}");
+                CloseWebSocketConnection();
+                return true;
+            }
+
+            return false;
         }
 
         void OnReceivedVanguardStartedReport(OperationReport report)
