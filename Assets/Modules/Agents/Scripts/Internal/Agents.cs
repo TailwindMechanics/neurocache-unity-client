@@ -40,6 +40,7 @@ namespace Modules.Agents.Internal
                 Guid.Parse(operationToken),
                 reportVo.Author,
                 reportVo.Payload,
+                Guid.Parse(settings.AgentId),
                 true,
                 reportVo.ReportId
             );
