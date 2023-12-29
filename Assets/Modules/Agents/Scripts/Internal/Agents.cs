@@ -25,7 +25,7 @@ namespace Modules.Agents.Internal
         OperationReportVo reportVo;
 
         [UsedImplicitly]
-        bool Connected => webSocket is { State: WebSocketState.Open };
+        bool Connected => webSocket is { State: WebSocketState.Open } or { State: WebSocketState.Connecting };
         [UsedImplicitly]
         bool AllowSend => !string.IsNullOrWhiteSpace(operationToken);
 
@@ -83,7 +83,6 @@ namespace Modules.Agents.Internal
         {
             if (report.ReportId == "vanguard_started")
             {
-                Debug.Log($"<color=yellow><b>Received vanguard started report: {report}</b></color>");
                 operationToken = report.Token.ToString();
             }
         }
@@ -98,7 +97,7 @@ namespace Modules.Agents.Internal
                 var wsUri = new Uri($"{settings.Endpoint}/agent/run?agentId={settings.AgentId}&apiKey={settings.ApiKey}");
                 Debug.Log($"<color=white><b>Connecting to uri:{wsUri}</b></color>");
                 await webSocket.ConnectAsync(wsUri, cancellationTokenSource.Token);
-                Debug.Log("<color=cyan><b>Connected via WebSocket</b></color>");
+                Debug.Log("<color=#47fcfc><b>>>> Connected via WebSocket</b></color>");
 
                 await ReceiveMessages(cancellationTokenSource.Token);
             }
@@ -146,8 +145,6 @@ namespace Modules.Agents.Internal
                 if (result.MessageType == WebSocketMessageType.Text)
                 {
                     var receivedMessage = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                    Debug.Log($"<color=yellow><b>Received message: {receivedMessage}</b></color>");
-
                     var report = OperationReport.FromJson(receivedMessage);
                     OnReportReceived(report);
                 }
